@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "IlOptimizer": {
+      "commandName": "Project",
+      "commandLineArgs": ""
+    }
+  }
+}

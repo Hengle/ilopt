@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Mono.Cecil;
 
 namespace IlOptimizer
@@ -12,8 +13,12 @@ namespace IlOptimizer
     /// <summary>Provides a set of methods for executing a program.</summary>
     public static class Program
     {
-        private static readonly string[] Options = {
-            "StripLocalsInit"
+        private static readonly Optimization[] Optimizations = {
+            new Optimization(
+                name: nameof(StripLocalsInit),
+                description: "Strips the 'init' flag from the '.locals' directive for the matching methods.",
+                optimizeMethod: StripLocalsInit.Optimize
+            )
         };
 
         /// <summary>The entry point of the program.</summary>
@@ -21,26 +26,45 @@ namespace IlOptimizer
         /// <returns>The exit code of the program.</returns>
         public static int Main(string[] args)
         {
-            if ((args.Length == 0) || args.Any((arg) => Matches(arg, "?", "h", "help") == string.Empty))
+            if (args.Length == 0)
             {
-                PrintHelp(args);
+                return PrintHelp();
             }
-            else
+
+            var regex = string.Empty;
+            var optimizations = new List<Optimization>();
+            var assemblyPaths = new List<string>();
+
+            foreach (var arg in args)
             {
-                var assemblyPaths = new List<string>();
-                var options = new List<(string name, string parameter)>();
-
-                foreach (var arg in args)
+                if (Matches(arg, "?", "h", "help") == string.Empty)
                 {
-                    string parameter = null;
+                    return PrintHelp();
+                }
+                else
+                {
+                    var parameter = Matches(arg, "f", "filter");
 
-                    foreach (var option in Options)
+                    if (parameter != null)
                     {
-                        parameter = Matches(arg, option);
+                        if (parameter == string.Empty)
+                        {
+                            WriteError("    Error: The 'filter' command was specified but did not contain the expected parameter.");
+                            WriteError("           Please use the 'help' command for more details on the expected format.");
+                            Exit();
+                        }
+
+                        regex = parameter;
+                        continue;
+                    }
+
+                    foreach (var optimization in Optimizations)
+                    {
+                        parameter = Matches(arg, optimization.Name);
 
                         if (parameter != null)
                         {
-                            options.Add((option, parameter));
+                            optimizations.Add(optimization);
                             break;
                         }
                     }
@@ -51,10 +75,10 @@ namespace IlOptimizer
 
                         if (!File.Exists(arg))
                         {
-                            WriteLine(ConsoleColor.Yellow, $"    Warning: A specified assembly could not be located.");
-                            WriteLine(ConsoleColor.Yellow, $"             Argument: '{arg}'");
-                            WriteLine(ConsoleColor.Yellow, $"             Resolved Path: '{path}'");
-                            WriteLine(ConsoleColor.Yellow, $"    Continuing will ignore this argument; Otherwise, the process will exit.");
+                            WriteWarning("    Warning: A specified assembly could not be located.");
+                            WriteWarning($"             Argument: '{arg}'");
+                            WriteWarning($"             Resolved Path: '{path}'");
+                            WriteWarning("    Continuing will ignore this argument; Otherwise, the process will exit.");
 
                             if (!CheckForContinue())
                             {
@@ -67,27 +91,27 @@ namespace IlOptimizer
                         }
                     }
                 }
-
-                if (options.Count == 0)
-                {
-                    WriteLine(ConsoleColor.Red, $"    Error: No options were specified.");
-                    Exit();
-                }
-                else if (assemblyPaths.Count == 0)
-                {
-                    WriteLine(ConsoleColor.Red, $"    Error: No assemblies were specified.");
-                    Exit();
-                }
-
-                Run(options, assemblyPaths);
             }
 
+            if (optimizations.Count == 0)
+            {
+                WriteError("    Error: No optimizations were specified.");
+                Exit();
+            }
+            else if (assemblyPaths.Count == 0)
+            {
+                WriteError("    Error: No assemblies were specified.");
+                Exit();
+            }
+
+            Run(regex, optimizations, assemblyPaths);
             return 0;
         }
 
         private static bool CheckForContinue()
         {
-            Write(ConsoleColor.Yellow, $"    Would you like to continue [Y/n]: ");
+            Console.WriteLine();
+            Console.Write("    Would you like to continue [Y/n]: ");
 
             while (true)
             {
@@ -95,23 +119,25 @@ namespace IlOptimizer
 
                 if (string.IsNullOrWhiteSpace(input) || (input == "yes") || (input == "y"))
                 {
+                    Console.WriteLine();
                     return true;
                 }
                 else if ((input == "no") || (input == "n"))
                 {
+                    Console.WriteLine();
                     return false;
                 }
                 else
                 {
-                    Write(ConsoleColor.Yellow, $"        Unrecognized input: '{input}'. Please use 'yes', 'y', 'no', or 'n': ");
+                    Console.Write($"        Unrecognized input: '{input}'. Please use 'yes', 'y', 'no', or 'n': ");
                 }
             }
         }
 
-        private static void Exit()
+        private static void Exit(int exitCode = int.MinValue)
         {
             Console.WriteLine("Exiting...");
-            Environment.Exit(int.MinValue);
+            Environment.Exit(exitCode);
         }
 
         private static string Matches(string arg, params string[] keywords)
@@ -140,32 +166,141 @@ namespace IlOptimizer
             return null;
         }
 
-        private static void PrintHelp(string[] args)
+        private static int PrintHelp()
         {
             var thisAssembly = Assembly.GetExecutingAssembly();
 
-            Console.WriteLine($"IlOptimizer v{thisAssembly.GetName().Version} - A tool for performing post-compilation optimization on managed assemblies.");
-            Console.WriteLine($"    {Path.GetFileName(thisAssembly.Location)} [help-command] <options> <assemblies>");
+            Console.WriteLine("IlOptimizer v{thisAssembly.GetName().Version} - A tool for performing post-compilation optimization on managed assemblies.");
+            Console.WriteLine($"    {Path.GetFileName(thisAssembly.Location)} [help-command] [filter-command] <optimizations> <assemblies>");
             Console.WriteLine();
-            Console.WriteLine($"    All options and commands must be prefixed with '-' or '/'.");
-            Console.WriteLine($"    Any options that take parameters can use '=' or ':'");
-            Console.WriteLine($"    Any unrecognized arguments are treated as <assemblies>.");
+            Console.WriteLine("    All optimizations and commands must be prefixed with '-' or '/'.");
+            Console.WriteLine("    Any optimizations that take parameters can use '=' or ':'");
+            Console.WriteLine("    Any unrecognized arguments are treated as <assemblies>.");
             Console.WriteLine();
-            Console.WriteLine($"    Help Command: 'help', 'h', or '?'");
-            Console.WriteLine($"        Prints this help message.");
+            Console.WriteLine("    Help Command: 'help', 'h', or '?'");
+            Console.WriteLine("        Prints this help message.");
+            Console.WriteLine();
+            Console.WriteLine("    Filter Command: 'filter=<regex>' or 'f=<regex>'");
+            Console.WriteLine("        Filters the methods that should be optimized by matching the regular expression against a method's full name.");
+            Console.WriteLine("        All methods will be matched if this command is not specified.");
             Console.WriteLine();
             Console.WriteLine($"    Options");
-            Console.WriteLine($"        StripLocalsInit: 'striplocalsinit' or 'striplocalsinit=<RegEx>'");
-            Console.WriteLine($"            Strips the 'init' flag from the '.locals' directive for the matching methods.");
-            Console.WriteLine($"            This matches against all methods if a regular expression is not given.");
-            Console.WriteLine($"            When a regular expression is given, it is used to match against a method's full name.");
+
+            foreach (var optimization in Optimizations)
+            {
+                Console.WriteLine($"        {optimization.Name}");
+                Console.WriteLine($"            {optimization.Description}");
+            }
+
             Console.WriteLine();
             Console.WriteLine($"    Asssemblies");
             Console.WriteLine($"        One or more assemblies on which the selected optimizations should be performed.");
             Console.WriteLine($"        The post-processed assemblies will be output to a folder called 'optimized' in the working directory.");
+            Console.WriteLine();
+
+            return int.MinValue;
         }
 
-        private static void Run(IEnumerable<(string name, string parameter)> options, IEnumerable<string> assemblyPaths)
+        private static void Process(AssemblyDefinition assembly, string regex, List<Optimization> optimizations)
+        {
+            Console.WriteLine($"    Processing {assembly.FullName}");
+
+            var processed = new ProcessedData();
+
+            foreach (var module in assembly.Modules)
+            {
+                Process(module, regex, optimizations, ref processed);
+                processed.ModuleCount++;
+            }
+
+            Console.WriteLine($"      Processed: {processed.ModuleCount} Modules, {processed.TypeCount} Types, {processed.EventCount} Events, {processed.PropertyCount} Properties, {processed.MethodCount} Methods");
+        }
+
+        private static void Process(EventDefinition @event, string regex, List<Optimization> optimizations, ref ProcessedData processed)
+        {
+            Process(@event.AddMethod, regex, optimizations, ref processed);
+            Process(@event.InvokeMethod, regex, optimizations, ref processed);
+            Process(@event.RemoveMethod, regex, optimizations, ref processed);
+
+            processed.MethodCount += 3;
+
+            foreach (var otherMethod in @event.OtherMethods)
+            {
+                Process(otherMethod, regex, optimizations, ref processed);
+                processed.MethodCount++;
+            }
+        }
+
+        private static void Process(MethodDefinition method, string regex, List<Optimization> optimizations, ref ProcessedData processed)
+        {
+            if ((method is null) || ((regex != string.Empty) && (Regex.IsMatch(method.FullName, regex) == false)))
+            {
+                processed.MethodCount--;
+                return;
+            }
+
+            for (int index = 0; index < optimizations.Count; index++)
+            {
+                var optimization = optimizations[index];
+
+                if (optimization.OptimizeMethod(method))
+                {
+                    optimization.UpdatedMethodCount++;
+                }
+            }
+        }
+
+        private static void Process(ModuleDefinition module, string regex, List<Optimization> optimizations, ref ProcessedData processed)
+        {
+            foreach (var type in module.Types)
+            {
+                Process(type, regex, optimizations, ref processed);
+                processed.TypeCount++;
+            }
+        }
+
+        private static void Process(PropertyDefinition property, string regex, List<Optimization> optimizations, ref ProcessedData processed)
+        {
+            Process(property.GetMethod, regex, optimizations, ref processed);
+            Process(property.SetMethod, regex, optimizations, ref processed);
+
+            processed.MethodCount += 2;
+
+            foreach (var otherMethod in property.OtherMethods)
+            {
+                Process(otherMethod, regex, optimizations, ref processed);
+                processed.MethodCount++;
+            }
+        }
+
+        private static void Process(TypeDefinition type, string regex, List<Optimization> optimizations, ref ProcessedData processed)
+        {
+            foreach (var nestedType in type.NestedTypes)
+            {
+                Process(nestedType, regex, optimizations, ref processed);
+                processed.TypeCount++;
+            }
+
+            foreach (var @event in type.Events)
+            {
+                Process(@event, regex, optimizations, ref processed);
+                processed.EventCount++;
+            }
+
+            foreach (var property in type.Properties)
+            {
+                Process(property, regex, optimizations, ref processed);
+                processed.PropertyCount++;
+            }
+
+            foreach (var method in type.Methods)
+            {
+                Process(method, regex, optimizations, ref processed);
+                processed.MethodCount++;
+            }
+        }
+
+        private static void Run(string regex, List<Optimization> optimizations, List<string> assemblyPaths)
         {
             var outputPath = Path.GetFullPath("optimized");
             Directory.CreateDirectory(outputPath);
@@ -176,9 +311,9 @@ namespace IlOptimizer
 
                 if (Path.GetDirectoryName(assemblyPath) == outputPath)
                 {
-                    WriteLine(ConsoleColor.Yellow, $"    Warning: An assembly was given which exists in the output folder for the tool.");
-                    WriteLine(ConsoleColor.Yellow, $"             Assembly: '{assemblyPath}'");
-                    WriteLine(ConsoleColor.Yellow, $"    Continuing will skip processing for this assembly; Otherwise, the process will exit.");
+                    WriteWarning("    Warning: An assembly was given which exists in the output folder for the tool.");
+                    WriteWarning($"             Assembly: '{assemblyPath}'");
+                    WriteWarning("    Continuing will skip processing for this assembly; Otherwise, the process will exit.");
 
                     if (CheckForContinue())
                     {
@@ -190,10 +325,10 @@ namespace IlOptimizer
 
                 if (File.Exists(outputAssemblyPath))
                 {
-                    WriteLine(ConsoleColor.Yellow, $"    Warning: A post-processed assembly with the same name already exists in the output folder.");
-                    WriteLine(ConsoleColor.Yellow, $"             Assembly: '{assemblyPath}'");
-                    WriteLine(ConsoleColor.Yellow, $"             Output Assembly: '{outputAssemblyPath}'");
-                    WriteLine(ConsoleColor.Yellow, $"    Continuing will cause the existing post-processed assembly to be overwritten; Otherwise, processing for this assembly will be skipped.");
+                    WriteWarning("    Warning: A post-processed assembly with the same name already exists in the output folder.");
+                    WriteWarning($"             Assembly: '{assemblyPath}'");
+                    WriteWarning($"             Output Assembly: '{outputAssemblyPath}'");
+                    WriteWarning("    Continuing will cause the existing post-processed assembly to be overwritten; Otherwise, processing for this assembly will be skipped.");
 
                     if (!CheckForContinue())
                     {
@@ -202,33 +337,23 @@ namespace IlOptimizer
                 }
 
                 var assembly = AssemblyDefinition.ReadAssembly(assemblyPath);
-
-                foreach (var option in options)
                 {
-                    if (option.name.Equals("StripLocalsInit", StringComparison.OrdinalIgnoreCase))
-                    {
-                        StripLocalsInit.Process(assembly, option.parameter);
-                    }
-                    else
-                    {
-                        WriteLine(ConsoleColor.Red, $"    Error: An unrecognized option was encountered. No changes will be saved.");
-                        WriteLine(ConsoleColor.Red, $"        Option: '{option}'");
-                        Exit();
-                    }
+                    Process(assembly, regex, optimizations);
                 }
-
                 assembly.Write(outputAssemblyPath);
+
+                Console.WriteLine();
+
+                foreach (var optimization in optimizations)
+                {
+                    Console.WriteLine($"    {optimization.Name}: Updated {optimization.UpdatedMethodCount} Methods");
+                }
             }
         }
 
-        private static void Write(ConsoleColor color, string message)
+        private static void WriteError(string message)
         {
-            var foregroundColor = Console.ForegroundColor;
-            {
-                Console.ForegroundColor = color;
-                Console.Write(message);
-            }
-            Console.ForegroundColor = foregroundColor;
+            WriteLine(ConsoleColor.Red, message);
         }
 
         private static void WriteLine(ConsoleColor color, string message)
@@ -239,6 +364,11 @@ namespace IlOptimizer
                 Console.WriteLine(message);
             }
             Console.ForegroundColor = foregroundColor;
+        }
+
+        private static void WriteWarning(string message)
+        {
+            WriteLine(ConsoleColor.Yellow, message);
         }
     }
 }

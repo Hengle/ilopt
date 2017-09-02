@@ -16,6 +16,10 @@
     <InternalsVisibleTo Include="$(MSBuildProjectName).UnitTests" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Include="Properties\launchSettings.json" />
+  </ItemGroup>
+
   <Import Project="$(MSBuildThisFileDirectory)..\..\Imports\IlOptimizer.Common.targets" />
 
 </Project>
