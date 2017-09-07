@@ -21,11 +21,14 @@ namespace IlOptimizer
 
                 methodBody.InitLocals = false;
                 {
-                    var rootNode = InstructionNode.CreateGraph(methodBody);
+                    var instructionGraph = new InstructionGraph(methodBody);
 
-                    // TODO: We need to go through the instruction graph for each variable
-                    // and determine whether or not the code naturally initializes it before
-                    // its first access.
+                    foreach (var variable in methodBody.Variables)
+                    {
+                        // TODO: We need to go through the instruction graph for each variable
+                        // and determine whether or not the code naturally initializes it before
+                        // its first access.
+                    }
                 }
                 return true;
             }

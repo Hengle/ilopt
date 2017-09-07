@@ -62,6 +62,12 @@ namespace IlOptimizer.CodeAnalysis
             }
         }
 
+        public static bool IsBranchInstruction(this Instruction instruction)
+        {
+            var flowControl = instruction.OpCode.FlowControl;
+            return (flowControl == FlowControl.Cond_Branch) || (flowControl == FlowControl.Branch);
+        }
+
         public static bool IsLoadLocalInstruction(this Instruction instruction)
         {
             var code = instruction.OpCode.Code;
