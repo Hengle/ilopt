@@ -238,7 +238,7 @@ namespace IlOptimizer
                 return;
             }
 
-            for (int index = 0; index < optimizations.Count; index++)
+            for (var index = 0; index < optimizations.Count; index++)
             {
                 var optimization = optimizations[index];
 

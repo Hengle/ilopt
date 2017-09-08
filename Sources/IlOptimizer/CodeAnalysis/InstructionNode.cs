@@ -11,134 +11,89 @@ namespace IlOptimizer.CodeAnalysis
 {
     // This is a node which defines a basic block of instructions, for use in a control flow graph.
 
-    public class InstructionNode
+    public sealed class InstructionNode
     {
         #region Constructors
-        public InstructionNode(ImmutableArray<Instruction> instructions, ImmutableArray<InstructionNode> childNodes, bool isSelfReferencing)
+        private InstructionNode()
         {
-            if (isSelfReferencing && (childNodes.Contains(this) == false))
-            {
-                childNodes = childNodes.Add(this);
-            }
-
-            ChildNodes = childNodes;
-            Instructions = instructions;
+            Children = ImmutableHashSet.Create<InstructionNode>();
+            Instructions = ImmutableArray.Create<Instruction>();
+            Parents = ImmutableHashSet.Create<InstructionNode>();
         }
         #endregion
 
         #region Properties
-        public ImmutableArray<InstructionNode> ChildNodes { get; private set; }
+        public ImmutableHashSet<InstructionNode> Children { get; private set; }
+
+        public int InDegree
+        {
+            get
+            {
+                return Parents.Count;
+            }
+        }
 
         public ImmutableArray<Instruction> Instructions { get; private set; }
 
-        public bool ContainsCyclicNodes
+        public int OutDegree
         {
             get
             {
-                return IsCyclic || ChildNodes.Any((childNode) => childNode.ContainsCyclicNodes);
+                return Children.Count;
             }
         }
 
-        public bool IsCyclic
-        {
-            get
-            {
-                return Contains(this, recurse: true);
-            }
-        }
-
-        public bool IsLeafNode
-        {
-            get
-            {
-                return ChildNodes.IsEmpty;
-            }
-        }
-
-        public bool IsSelfReferencing
-        {
-            get
-            {
-                return Contains(this, recurse: false);
-            }
-        }
-        #endregion
-
-        #region Properties
-        public bool Contains(Instruction instruction, bool recurse = false)
-        {
-            return Instructions.Contains(instruction)
-                || (recurse && ChildNodes.Any((childNode) => childNode.Contains(instruction, recurse)));
-        }
-
-        public bool Contains(InstructionNode instructionNode, bool recurse = false)
-        {
-            return ChildNodes.Any((childNode) => (childNode == instructionNode)
-                                              || (recurse && (childNode != this) && childNode.Contains(instructionNode, recurse)));
-        }
+        public ImmutableHashSet<InstructionNode> Parents { get; private set; }
         #endregion
 
         #region Static Methods
-        public static InstructionNode Create(Instruction instruction)
+        internal static InstructionNode Create(Instruction rootInstruction)
         {
-            var instructionNodeMap = new Dictionary<Instruction, Builder>();
-            var firstInstructionNodeMap = new Dictionary<Instruction, Builder>();
+            // This is essentially a depth-first traversal of the nodes that dynamically
+            // adds the parents, children, and instructions during the traversal. We use
+            // a stack-based algorithm to track pending nodes, rather than using recursion,
+            // so that we can process much more complex methods.
 
-            var builder = Builder.Create(instruction, instructionNodeMap, firstInstructionNodeMap);
-            return builder.ToInstructionNode();
-        }
-        #endregion
+            // We have two maps that are used to track the internal state of the graph:
+            //  * instructionNodeMap: Contains a map of every instruction to the node it belongs to
+            //  * firstInstructionMap: Contains a map of the first instruction for each node
 
-        #region System.Object Methods
-        public override string ToString()
-        {
-            if (Instructions.Length == 1)
+            // For each non-branching instruction, we just add the next instruction to the node
+            // currently being processed. But only after checking if it is the first instruction
+            // of another node (any other instruction should not have been processed yet). When it
+            // is the first instruction of another node, we add that node as a child of the current
+            // node and move to process the next node in the stack.
+
+            // When we reach a branching instruction we create a new node for each of the target
+            // instruction(s) and push them onto the stack. Like with the non-branching instructions,
+            // we check if it is the first instruction of existing node and similarly add it as a child
+            // of the current node. We then move to process the other target instruction(s) for the
+            // branch before finally moving to process the next node in the stack. Additionally, for
+            // a node that is not already the first instruction of another node, we check if it has
+            // been processed already. If so, we then move that instruction, and any subsequent
+            // instructions from the existing node to a new node and make the new node a child
+            // of the existing node. We finally move all children of the existing node to be children
+            // of the existing node to ensure the directed links remain correct.
+
+            Debug.Assert(rootInstruction != null);
+            Debug.Assert(rootInstruction.Offset == 0);
+
+            var rootNode = new InstructionNode();
+            var instructionNodeMap = new Dictionary<Instruction, InstructionNode>();
+            var firstInstructionMap = new Dictionary<Instruction, InstructionNode>();
+            var pendingNodes = new Stack<InstructionNode>();
+
+            rootNode.Instructions = rootNode.Instructions.Add(rootInstruction);
+
+            instructionNodeMap.Add(rootInstruction, rootNode);
+            firstInstructionMap.Add(rootInstruction, rootNode);
+
+            pendingNodes.Push(rootNode);
+
+            do
             {
-                return $"({Instructions.Single()})";
-            }
-            else
-            {
-                return $"({Instructions.First()}, {Instructions.Last()})";
-            }
-        }
-        #endregion
-
-        #region Structs
-        private sealed class Builder
-        {
-            #region Constructors
-            public Builder()
-            {
-                ChildBuilders = ImmutableArray.CreateBuilder<Builder>();
-                InstructionsBuilder = ImmutableArray.CreateBuilder<Instruction>();
-            }
-            #endregion
-
-            #region Properties
-            public ImmutableArray<Builder>.Builder ChildBuilders { get; }
-
-            public ImmutableArray<Instruction>.Builder InstructionsBuilder { get; }
-            #endregion
-
-            #region Static Methods
-            public static Builder Create(Instruction instruction, Dictionary<Instruction, Builder> instructionNodeMap, Dictionary<Instruction, Builder> firstInstructionNodeMap)
-            {
-                Debug.Assert(instruction != null);
-                Debug.Assert(instructionNodeMap != null);
-                Debug.Assert(firstInstructionNodeMap != null);
-
-                var builder = GetExistingBuilder(instruction, instructionNodeMap, firstInstructionNodeMap);
-
-                if (builder != null)
-                {
-                    return builder;
-                }
-
-                builder = new Builder();
-
-                AddInstruction(builder.InstructionsBuilder, instruction);
-                firstInstructionNodeMap.Add(instruction, builder);
-                instructionNodeMap.Add(instruction, builder);
+                var node = pendingNodes.Pop();
+                var instruction = node.Instructions.Last();
 
                 do
                 {
@@ -148,15 +103,10 @@ namespace IlOptimizer.CodeAnalysis
                     {
                         case FlowControl.Branch:
                         {
-                            // Unconditional branches specify the next instruction as their operand.
-                            // We also don't need to process the instruction at the next logical offset
-                            // since it will never be hit anyways.
+                            // Unconditional branches specify the next instruction as their operand and
+                            // will cause an unprocessed instruction to push a new node onto the stack.
 
-                            var childBuilder = Create((Instruction)(instruction.Operand), instructionNodeMap, firstInstructionNodeMap);
-
-                            var existingBuilder = instructionNodeMap[instruction];
-                            AddChildBuilder(existingBuilder.ChildBuilders, childBuilder);
-
+                            ProcessBranchTarget((Instruction)(instruction.Operand), node);
                             instruction = null;
                             break;
                         }
@@ -173,10 +123,7 @@ namespace IlOptimizer.CodeAnalysis
 
                                 foreach (var nextInstruction in nextInstructions)
                                 {
-                                    var childBuilder = Create(nextInstruction, instructionNodeMap, firstInstructionNodeMap);
-
-                                    var parentBuilder = instructionNodeMap[instruction];
-                                    AddChildBuilder(parentBuilder.ChildBuilders, childBuilder);
+                                    ProcessBranchTarget(nextInstruction, node);
                                 }
                             }
                             else
@@ -185,21 +132,14 @@ namespace IlOptimizer.CodeAnalysis
                                 // be the target instruction if the branch is taken and the other will
                                 // be the instruction at the next logical offset.
 
-                                var childBuilder = Create((Instruction)(instruction.Operand), instructionNodeMap, firstInstructionNodeMap);
-
-                                var parentBuilder = instructionNodeMap[instruction];
-                                AddChildBuilder(parentBuilder.ChildBuilders, childBuilder);
+                                ProcessBranchTarget((Instruction)(instruction.Operand), node);
                             }
 
                             // We need to add the next logical instruction as well, for when none of the
                             // branch conditions are met. However, we want to add this as a child node and
                             // then do no further processing.
 
-                            var nextBuilder = Create(instruction.Next, instructionNodeMap, firstInstructionNodeMap);
-
-                            var existingBuilder = instructionNodeMap[instruction];
-                            AddChildBuilder(existingBuilder.ChildBuilders, nextBuilder);
-
+                            ProcessBranchTarget(instruction.Next, node);
                             instruction = null;
                             break;
                         }
@@ -223,11 +163,17 @@ namespace IlOptimizer.CodeAnalysis
                         case FlowControl.Next:
                         {
                             // Break, Call, and Next instructions just transfer control to the instruction
-                            // at the next logical offset, resulting in a linear flow.
+                            // at the next logical offset, they continue processing on the current node.
 
-                            instruction = ProcessInstruction(instruction.Next, builder, instructionNodeMap, firstInstructionNodeMap);
+                            instruction = instruction.Next;
+
+                            if (ProcessInstruction(instruction, node) == false)
+                            {
+                                instruction = null;
+                            }
+
+                            break;
                         }
-                        break;
 
                         case FlowControl.Phi:
                             throw new NotImplementedException();
@@ -235,191 +181,261 @@ namespace IlOptimizer.CodeAnalysis
                         case FlowControl.Return:
                         case FlowControl.Throw:
                         {
-                            // Return and Throw instructions terminate the sequence and require no further processing.
+                            // Return and Throw instructions terminate the sequence for the current node and
+                            // do not cause any new nodes to appear on the stack.
+
                             instruction = null;
                             break;
                         }
                     }
                 }
                 while (instruction != null);
-
-                return builder;
             }
+            while (pendingNodes.Count != 0);
 
-            private static void AddChildBuilder(ImmutableArray<Builder>.Builder childBuilders, Builder builder)
-            {
-                if (childBuilders.Contains(builder) == false)
-                {
-                    childBuilders.Add(builder);
-                }
-            }
+            return rootNode;
 
-            private static void AddInstruction(ImmutableArray<Instruction>.Builder instructionsBuilder, Instruction instruction)
+            void ProcessBranchTarget(Instruction instruction, InstructionNode currentNode)
             {
-                if (instructionsBuilder.Contains(instruction) == false)
+                if (firstInstructionMap.TryGetValue(instruction, out var node))
                 {
-                    instructionsBuilder.Add(instruction);
-                }
-            }
-
-            private static void AddInstructionNode(ImmutableArray<InstructionNode>.Builder instructionNodeBuilder, InstructionNode instructionNode)
-            {
-                if (instructionNodeBuilder.Contains(instructionNode) == false)
-                {
-                    instructionNodeBuilder.Add(instructionNode);
-                }
-            }
-
-            private static Builder GetExistingBuilder(Instruction instruction, Dictionary<Instruction, Builder> instructionNodeMap, Dictionary<Instruction, Builder> firstInstructionNodeMap)
-            {
-                if (firstInstructionNodeMap.TryGetValue(instruction, out var existingBuilder))
-                {
-                    // This is already the "entry-point" for a non-branching instruction sequence
-                    // So we don't need to do anything and can just return the existing builder.
+                    // This is already the first instruction of a node, so we don't need
+                    // to do anything and can just return.
 
                     Debug.Assert(instructionNodeMap.ContainsKey(instruction));
                 }
-                else if (instructionNodeMap.TryGetValue(instruction, out existingBuilder))
+                else if (instructionNodeMap.TryGetValue(instruction, out node))
                 {
-                    // We have already inserted this instruction into an existing builder but it
-                    // is not an "entry-point". We need to create a new builder where this
-                    // instruction is the "entry-point" and insert it as the only child of the
-                    // previous builder the instruction was a member of.
+                    // This instruction has already been processed, but it is not the first
+                    // instruction of the node it belongs to. We need to create a new node
+                    // where it is the first instruction and insert it as a child of the
+                    // existing node.
 
-                    var insertedBuilder = new Builder();
+                    var newNode = new InstructionNode();
 
-                    var existingInstructionsBuilder = existingBuilder.InstructionsBuilder;
-                    var existingChildNodesBuilders = existingBuilder.ChildBuilders;
+                    var instructionIndex = node.Instructions.IndexOf(instruction);
+                    var instructionCount = (node.Instructions.Length - instructionIndex);
 
-                    var instructionIndex = existingInstructionsBuilder.IndexOf(instruction);
-                    var existingInstructionsBuilderCount = existingInstructionsBuilder.Count;
-
-                    for (var index = instructionIndex; index < existingInstructionsBuilderCount; index++)
+                    for (var index = 0; index < instructionCount; index++)
                     {
-                        var existingInstruction = existingInstructionsBuilder[instructionIndex];
-                        AddInstruction(insertedBuilder.InstructionsBuilder, existingInstruction);
+                        var existingInstruction = node.Instructions[instructionIndex];
 
-                        existingInstructionsBuilder.RemoveAt(instructionIndex);
-                        instructionNodeMap[existingInstruction] = insertedBuilder;
+                        Debug.Assert(newNode.Instructions.Contains(existingInstruction) == false);
+                        newNode.Instructions = newNode.Instructions.Add(existingInstruction);
+
+                        instructionNodeMap[existingInstruction] = newNode;
                     }
 
-                    foreach (var childBuilder in existingBuilder.ChildBuilders)
-                    {
-                        AddChildBuilder(insertedBuilder.ChildBuilders, childBuilder);
-                    }
+                    Debug.Assert(newNode.Instructions.Length == instructionCount);
 
-                    existingChildNodesBuilders.Clear();
-                    AddChildBuilder(existingChildNodesBuilders, insertedBuilder);
+                    node.Instructions = node.Instructions.RemoveRange(instructionIndex, instructionCount);
+                    firstInstructionMap.Add(instruction, newNode);
 
-                    firstInstructionNodeMap.Add(instruction, insertedBuilder);
-                    existingBuilder = insertedBuilder;
+                    newNode.Children = node.Children;
+                    node.Children = ImmutableHashSet.Create(newNode);
+                    newNode.Parents = newNode.Parents.Add(node);
+
+                    node = newNode;
+                }
+                else
+                {
+                    // This instruction hasn't been processed yet, so we need to process it by
+                    // creating a new node and adding it as the first instruction and then
+                    // pushing it into the list of pending nodes.
+
+                    node = new InstructionNode();
+                    node.Instructions = node.Instructions.Add(instruction);
+
+                    instructionNodeMap.Add(instruction, node);
+                    firstInstructionMap.Add(instruction, node);
+
+                    pendingNodes.Push(node);
                 }
 
-                return existingBuilder;
+                node.Parents = node.Parents.Add(currentNode);
+                currentNode.Children = currentNode.Children.Add(node);
             }
 
-            private static Instruction ProcessInstruction(Instruction instruction, Builder builder, Dictionary<Instruction, Builder> instructionNodeMap, Dictionary<Instruction, Builder> firstInstructionNodeMap)
+            bool ProcessInstruction(Instruction instruction, InstructionNode currentNode)
             {
-                var existingBuilder = GetExistingBuilder(instruction, instructionNodeMap, firstInstructionNodeMap);
-
-                if (existingBuilder != null)
+                if (firstInstructionMap.TryGetValue(instruction, out var node))
                 {
-                    // The instruction has already been processed and is part of an existing builder
-                    // So we just need to add it as a child of the current build and can return null
-                    // to indicate no further processing should be done.
+                    // This is already the first instruction of a node, so we just need
+                    // to add the existing node as a child of the current node and return
+                    // false so that we stop processing this sequence.
 
-                    AddChildBuilder(builder.ChildBuilders, existingBuilder);
-                    return null;
+                    currentNode.Children = currentNode.Children.Add(node);
+                    node.Parents = node.Parents.Add(currentNode);
+                    return false;
                 }
-
-                // Otherwise, we need to add the instruction to the current builder, and to the
-                // instructionNodeMap and then return the instruction so that further processing
-                // is done.
-
-                AddInstruction(builder.InstructionsBuilder, instruction);
-                instructionNodeMap.Add(instruction, builder);
-                return instruction;
-            }
-            #endregion
-
-            #region Methods
-            public InstructionNode ToInstructionNode()
-            {
-                var childBuildersMap = new Dictionary<Builder, InstructionNode>();
-                var cyclicReferences = new Dictionary<Builder, HashSet<Builder>>();
-
-                var instructionNode = ToInstructionNode(childBuildersMap, cyclicReferences);
-
-                foreach (var builder in cyclicReferences.Keys)
+                else
                 {
-                    var childBuilders = cyclicReferences[builder];
-                    var fixupNode = childBuildersMap[builder];
+                    // This instruction hasn't been processed yet, so we need to process it by
+                    // adding it to the current node and returning true so that we can continue
+                    // processing the current sequence.
 
-                    foreach (var childNode in childBuildersMap.Where((childBuildersMapEntry) => childBuilders.Any((childBuilder) => (childBuilder == childBuildersMapEntry.Key)))
-                                                              .Select((childBuilderMapEntry) => childBuilderMapEntry.Value))
+                    Debug.Assert(currentNode.Instructions.Contains(instruction) == false);
+                    currentNode.Instructions = currentNode.Instructions.Add(instruction);
+                    return true;
+                }
+            }
+        }
+        #endregion
+
+        #region Methods
+        public bool CanReach(InstructionNode node)
+        {
+            // Determining if this node can reach the target node is a simple traversal
+            // where we return true if the traversed node is ever the target node.
+
+            return TraverseDepthFirst((traversedNode) => (traversedNode == node)).Any();
+        }
+
+        public bool IsAdjacent(InstructionNode node)
+        {
+            // Determining if we are adjacent to a node is simply checking if the
+            // children or parents of this node contains the target node.
+
+            return Children.Contains(node) || Parents.Contains(node);
+        }
+
+        public void TraverseBreadthFirst(Action<InstructionNode> action)
+        {
+            // We do a breadth-first traversal of the nodes using a queue-based algorithm
+            // to track pending nodes, rather than using recursion, so that we can
+            // process much more complex graphs.
+
+            var visitedNodes = new HashSet<InstructionNode>();
+            var pendingNodes = new Queue<InstructionNode>();
+
+            visitedNodes.Add(this);
+            pendingNodes.Enqueue(this);
+
+            do
+            {
+                var node = pendingNodes.Dequeue();
+                action(node);
+
+                foreach (var child in node.Children)
+                {
+                    if (visitedNodes.Contains(child) == false)
                     {
-                        if (fixupNode.ChildNodes.Contains(childNode) == false)
-                        {
-                            fixupNode.ChildNodes = fixupNode.ChildNodes.Add(childNode);
-                        }
+                        visitedNodes.Add(child);
+                        pendingNodes.Enqueue(child);
                     }
                 }
-
-                return instructionNode;
             }
+            while (pendingNodes.Count != 0);
+        }
 
-            private InstructionNode ToInstructionNode(Dictionary<Builder, InstructionNode> childBuildersMap, Dictionary<Builder, HashSet<Builder>> cyclicReferences)
+        public IEnumerable<T> TraverseBreadthFirst<T>(Func<InstructionNode, T> func)
+        {
+            // We do a breadth-first traversal of the nodes using a queue-based algorithm
+            // to track pending nodes, rather than using recursion, so that we can
+            // process much more complex graphs.
+
+            var visitedNodes = new HashSet<InstructionNode>();
+            var pendingNodes = new Queue<InstructionNode>();
+
+            visitedNodes.Add(this);
+            pendingNodes.Enqueue(this);
+
+            do
             {
-                var isSelfReferencing = false;
+                var node = pendingNodes.Dequeue();
+                yield return func(node);
 
-                return new InstructionNode(
-                   InstructionsBuilder.ToImmutableArray(),
-                   GetChildNodes(childBuildersMap, cyclicReferences, ref isSelfReferencing),
-                   isSelfReferencing
-                );
-            }
-
-            private ImmutableArray<InstructionNode> GetChildNodes(Dictionary<Builder, InstructionNode> childBuildersMap, Dictionary<Builder, HashSet<Builder>> cyclicReferences, ref bool isSelfReferencing)
-            {
-                var childNodesBuilder = ImmutableArray.CreateBuilder<InstructionNode>();
-
-                foreach (var childBuilder in ChildBuilders)
+                foreach (var child in node.Children)
                 {
-                    if (childBuilder == this)
+                    if (visitedNodes.Contains(child) == false)
                     {
-                        isSelfReferencing = true;
-                    }
-                    else
-                    {
-                        if (!childBuildersMap.TryGetValue(childBuilder, out var instructionNode))
-                        {
-                            childBuildersMap.Add(childBuilder, null);
-                            instructionNode = childBuilder.ToInstructionNode(childBuildersMap, cyclicReferences);
-
-                            childBuildersMap[childBuilder] = instructionNode;
-                            AddInstructionNode(childNodesBuilder, instructionNode);
-                            childNodesBuilder.Add(instructionNode);
-                        }
-                        else if (instructionNode == null)
-                        {
-                            if (!cyclicReferences.TryGetValue(this, out var childBuilders))
-                            {
-                                childBuilders = new HashSet<Builder>();
-                                cyclicReferences.Add(this, childBuilders);
-                            }
-
-                            childBuilders.Add(childBuilder);
-                        }
-                        else
-                        {
-                            AddInstructionNode(childNodesBuilder, instructionNode);
-                        }
+                        visitedNodes.Add(child);
+                        pendingNodes.Enqueue(child);
                     }
                 }
-
-                return childNodesBuilder.ToImmutableArray();
             }
-            #endregion
+            while (pendingNodes.Count != 0);
+        }
+
+        public void TraverseDepthFirst(Action<InstructionNode> action)
+        {
+            // We do a depth-first traversal of the nodes using a stack-based algorithm
+            // to track pending nodes, rather than using recursion, so that we can
+            // process much more complex graphs.
+
+            var visitedNodes = new HashSet<InstructionNode>();
+            var pendingNodes = new Stack<InstructionNode>();
+
+            visitedNodes.Add(this);
+            pendingNodes.Push(this);
+
+            do
+            {
+                var node = pendingNodes.Pop();
+                action(node);
+
+                foreach (var child in node.Children)
+                {
+                    if (visitedNodes.Contains(child) == false)
+                    {
+                        visitedNodes.Add(child);
+                        pendingNodes.Push(child);
+                    }
+                }
+            }
+            while (pendingNodes.Count != 0);
+        }
+
+        public IEnumerable<T> TraverseDepthFirst<T>(Func<InstructionNode, T> func)
+        {
+            // We do a depth-first traversal of the nodes using a stack-based algorithm
+            // to track pending nodes, rather than using recursion, so that we can
+            // process much more complex graphs.
+
+            var visitedNodes = new HashSet<InstructionNode>();
+            var pendingNodes = new Stack<InstructionNode>();
+
+            visitedNodes.Add(this);
+            pendingNodes.Push(this);
+
+            do
+            {
+                var node = pendingNodes.Pop();
+                yield return func(node);
+
+                foreach (var child in node.Children)
+                {
+                    if (visitedNodes.Contains(child) == false)
+                    {
+                        visitedNodes.Add(child);
+                        pendingNodes.Push(child);
+                    }
+                }
+            }
+            while (pendingNodes.Count != 0);
+        }
+        #endregion
+
+        #region System.Object Methods
+        public override string ToString()
+        {
+            switch (Instructions.Length)
+            {
+                case 0:
+                {
+                    return string.Empty;
+                }
+
+                case 1:
+                {
+                    return $"({Instructions.Single()})";
+                }
+
+                default:
+                {
+                    return $"({Instructions.First()}, {Instructions.Last()})";
+                }
+            }
         }
         #endregion
     }
