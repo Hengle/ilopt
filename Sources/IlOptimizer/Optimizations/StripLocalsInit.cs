@@ -18,7 +18,7 @@ namespace IlOptimizer.Optimizations
     /// <summary>Provides methods for stripping the 'init' flag from the '.locals' directive for a method.</summary>
     public static class StripLocalsInit
     {
-        public static bool Optimize(MethodDefinition method, string parameter)
+        public static bool? Optimize(MethodDefinition method, string parameter)
         {
             if (method.HasBody)
             {
@@ -94,15 +94,16 @@ namespace IlOptimizer.Optimizations
                                 if (index < instructions.Length)
                                 {
                                     var nextInstruction = instructions[index];
+                                    var nextInstructionFamily = nextInstruction.GetInstructionFamily();
 
-                                    if (nextInstruction.GetInstructionFamily() != InstructionFamily.Initobj)
-                                    {
-                                        index--;
-                                    }
-                                    else
+                                    if (nextInstructionFamily == InstructionFamily.Initobj)
                                     {
                                         instruction = nextInstruction;
                                         assigned = true;
+                                    }
+                                    else
+                                    {
+                                        index--;
                                     }
                                 }
                             }
@@ -147,10 +148,11 @@ namespace IlOptimizer.Optimizations
                     }
 
                     // TODO: Handle the case where variables were assigned outside the root node.
+                    return false;
                 }
             }
 
-            return false;
+            return null;
         }
 
         private class VariableAccessData

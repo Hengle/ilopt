@@ -209,6 +209,16 @@ namespace IlOptimizer
             Console.WriteLine("    Any optimizations that take parameters can use '=' or ':'");
             Console.WriteLine("    Any unrecognized arguments are treated as <assemblies>.");
             Console.WriteLine();
+            Console.WriteLine("    Each processed assembly will list the its full name as well as the number of modules, types, events, properties, and methods processed");
+            Console.WriteLine("    An event is added to the event count while the methods it contains ('add', 'remove', 'invoke', etc) are added to the method count.");
+            Console.WriteLine("    A property is added to the property count while the methods it contains ('get', 'set', etc) are added to the method count.");
+            Console.WriteLine();
+            Console.WriteLine("    Each optimization performed will then list the number of methods updates, skipped, or failed.");
+            Console.WriteLine("    An updated method had the optimization successfully performed.");
+            Console.WriteLine("    A skipped method had no code eligible for the optimization.");
+            Console.WriteLine("    A failed method had eligible code, but the optimization was not able to be performed succesfully.");
+            Console.WriteLine("    ");
+            Console.WriteLine();
             Console.WriteLine("    Help Command: 'help', 'h', or '?'");
             Console.WriteLine("        Prints this help message.");
             Console.WriteLine();
@@ -284,10 +294,19 @@ namespace IlOptimizer
             for (var index = 0; index < optimizations.Count; index++)
             {
                 var optimization = optimizations[index];
+                var result = optimization.OptimizeMethod(method, optimization.Parameter);
 
-                if (optimization.OptimizeMethod(method, optimization.Parameter))
+                if (result is null)
+                {
+                    optimization.SkippedMethodCount++;
+                }
+                else if (result == true)
                 {
                     optimization.UpdatedMethodCount++;
+                }
+                else
+                {
+                    optimization.FailedMethodCount++;
                 }
             }
         }
@@ -388,7 +407,7 @@ namespace IlOptimizer
 
                 foreach (var optimization in optimizations)
                 {
-                    Console.WriteLine($"    {optimization.Name}: Updated {optimization.UpdatedMethodCount} Methods");
+                    Console.WriteLine($"    {optimization.Name}: Updated {optimization.UpdatedMethodCount} Methods, Skipped {optimization.SkippedMethodCount} Methods, Failed {optimization.FailedMethodCount} Methods");
                 }
             }
         }

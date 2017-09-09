@@ -15,7 +15,7 @@ namespace IlOptimizer
         /// <param name="description">The description of the optimization.</param>
         /// <param name="availableParameters">The parameters available to the optimization.</param>
         /// <param name="optimizeMethod">The method to use when performing the optimization.</param>
-        public Optimization(string name, string description, Dictionary<string, string> availableParameters,  Func<MethodDefinition, string, bool> optimizeMethod)
+        public Optimization(string name, string description, Dictionary<string, string> availableParameters,  Func<MethodDefinition, string, bool?> optimizeMethod)
         {
             Name = name;
             Description = description;
@@ -24,20 +24,26 @@ namespace IlOptimizer
             Parameter = string.Empty;
         }
 
-        /// <summary>The parameters available to the optimization.</summary>
+        /// <summary>Gets the parameters available to the optimization.</summary>
         public ImmutableDictionary<string, string> AvailableParameters { get; }
 
-        /// <summary>The name of the optimization.</summary>
+        /// <summary>Gets the name of the optimization.</summary>
         public string Name { get; }
 
-        /// <summary>The description of the optimization.</summary>
+        /// <summary>Gets the description of the optimization.</summary>
         public string Description { get; }
 
-        /// <summary>The method to use when performing the optimization.</summary>
-        public Func<MethodDefinition, string, bool> OptimizeMethod { get; }
+        /// <summary>Gets or sets the number of methods that were failed by the optimization.</summary>
+        public int FailedMethodCount { get; set; }
 
-        /// <summary>The parameter to use when performing the optimization.</summary>
+        /// <summary>Gets the method to use when performing the optimization.</summary>
+        public Func<MethodDefinition, string, bool?> OptimizeMethod { get; }
+
+        /// <summary>Gets or sets the parameter to use when performing the optimization.</summary>
         public string Parameter { get; set; }
+
+        /// <summary>Gets or sets the number of methods that were skipped by the optimization.</summary>
+        public int SkippedMethodCount { get; set; }
 
         /// <summary>Gets or sets the number of methods that were updated by the optimization.</summary>
         public int UpdatedMethodCount { get; set; }
