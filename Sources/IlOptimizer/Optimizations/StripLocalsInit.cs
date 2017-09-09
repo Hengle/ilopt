@@ -6,7 +6,7 @@ using IlOptimizer.CodeAnalysis;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
-namespace IlOptimizer
+namespace IlOptimizer.Optimizations
 {
     // This has been tested on the v4.7 build of mscorlib.
     // We end up processing 1 Module, 3266 Types, 33 Events, 4939 Properties, and 34653 Methods
