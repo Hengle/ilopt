@@ -28,75 +28,109 @@ namespace IlOptimizer
                     var instructionGraph = new InstructionGraph(methodBody);
                     var root = instructionGraph.Root;
 
-                    var variableDataMap = new Dictionary<InstructionNode, bool?[]>();
                     var variables = methodBody.Variables;
-
-                    var foundLocalloc = false;
+                    var variableAccessData = null as VariableAccessData;
 
                     // We first do a depth first traversal and determine, for each variable
                     // whether or not it was accessed (not-null) for a node and whether the
                     // access was a load (false) or a store (true).
 
+                    var containsLocalloc = false;
+
                     root.TraverseDepthFirst((node) => {
                         var instructions = node.Instructions;
-
-                        var variableData = new bool?[variables.Count];
-                        variableDataMap[node] = variableData;
 
                         for (var index = 0; index < instructions.Length; index++)
                         {
                             var instruction = instructions[index];
+                            var instructionFamily = instruction.GetInstructionFamily();
 
-                            if (instruction.OpCode.Code == Code.Localloc)
+                            var variable = null as VariableReference;
+                            var assigned = false;
+
+                            if (instructionFamily == InstructionFamily.Localloc)
                             {
-                                foundLocalloc = true;
-                                return;
+                                containsLocalloc = true;
+                                continue;
                             }
-                            else if (instruction.IsStoreLocalInstruction())
+                            else if (instructionFamily == InstructionFamily.Stloc)
                             {
-                                var variableIndex = instruction.GetStoreLocalIndex();
-
-                                if (variableData[variableIndex].HasValue)
-                                {
-                                    continue;
-                                }
-
-                                variableData[variableIndex] = true;
+                                variable = instruction.GetVariableForStloc(methodBody);
+                                assigned = true;
                             }
-                            else if (instruction.IsLoadLocalInstruction())
+                            else if (instructionFamily == InstructionFamily.Ldloc)
                             {
-                                var variableIndex = instruction.GetLoadLocalIndex();
+                                variable = instruction.GetVariableForLdloc(methodBody);
+                            }
+                            else if (instructionFamily == InstructionFamily.Ldloca)
+                            {
+                                variable = instruction.GetVariableForLdloca();
+                            }
+                            else
+                            {
+                                continue;
+                            }
 
-                                if (variableData[variableIndex].HasValue)
-                                {
-                                    continue;
-                                }
+                            if (node.TryGetProperty(variable, out variableAccessData) == false)
+                            {
+                                variableAccessData = new VariableAccessData();
+                                node.AddProperty(variable, variableAccessData);
+                            }
 
+                            var accessInstructions = variableAccessData.Instructions;
+
+                            if ((accessInstructions.Count == 0) && (instructionFamily == InstructionFamily.Ldloca))
+                            {
                                 index++;
 
-                                variableData[variableIndex] = (index < instructions.Length)
-                                                           && (instructions[index].OpCode.Code == Code.Initobj);
+                                if (index < instructions.Length)
+                                {
+                                    var nextInstruction = instructions[index];
+
+                                    if (nextInstruction.GetInstructionFamily() != InstructionFamily.Initobj)
+                                    {
+                                        index--;
+                                    }
+                                    else
+                                    {
+                                        instruction = nextInstruction;
+                                        assigned = true;
+                                    }
+                                }
                             }
+
+                            if (assigned)
+                            {
+                                variableAccessData.AssignedAfter = true;
+
+                                if (accessInstructions.Count == 0)
+                                {
+                                    variableAccessData.AssignedFirst = true;
+                                }
+                            }
+
+                            variableAccessData.Instructions.Add(instruction);
                         }
                     });
 
-                    if (foundLocalloc)
+                    if (containsLocalloc)
                     {
-                        // TODO: Actually handle localloc
                         return false;
                     }
 
                     var unassignedVariables = new Stack<int>();
-                    var rootVariableData = variableDataMap[root];
-
-                    for (var index = 0; index < rootVariableData.Length; index++)
+                    
+                    for (var index = 0; index < variables.Count; index++)
                     {
-                        if (rootVariableData[index].GetValueOrDefault() == false)
+                        var variable = variables[index];
+
+                        if ((root.TryGetProperty(variable, out variableAccessData) == false) || (variableAccessData.AssignedFirst == false))
                         {
                             unassignedVariables.Push(index);
+                            continue;
                         }
                     }
-
+                    
                     if (unassignedVariables.Count == 0)
                     {
                         // The simplest route, all variables were assigned in the root node.
@@ -109,6 +143,26 @@ namespace IlOptimizer
             }
 
             return false;
+        }
+
+        private class VariableAccessData
+        {
+            #region Constructors
+            public VariableAccessData()
+            {
+                Instructions = new List<Instruction>();
+            }
+            #endregion
+
+            #region Properties
+            public bool AssignedAfter { get; set; }
+
+            public bool AssignedBefore { get; set; }
+
+            public bool AssignedFirst { get; set; }
+
+            public List<Instruction> Instructions { get; }
+            #endregion
         }
     }
 }

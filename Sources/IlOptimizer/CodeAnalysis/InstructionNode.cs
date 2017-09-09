@@ -1,6 +1,7 @@
 // Copyright © Tanner Gooding and Contributors. Licensed under the MIT License (MIT). See License.md in the repository root for more information.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
@@ -19,6 +20,7 @@ namespace IlOptimizer.CodeAnalysis
             Children = ImmutableHashSet.Create<InstructionNode>();
             Instructions = ImmutableArray.Create<Instruction>();
             Parents = ImmutableHashSet.Create<InstructionNode>();
+            Properties = new Hashtable();
         }
         #endregion
 
@@ -44,6 +46,8 @@ namespace IlOptimizer.CodeAnalysis
         }
 
         public ImmutableHashSet<InstructionNode> Parents { get; private set; }
+
+        public Hashtable Properties { get; }
         #endregion
 
         #region Static Methods
@@ -283,6 +287,11 @@ namespace IlOptimizer.CodeAnalysis
         #endregion
 
         #region Methods
+        public void AddProperty<T>(object key, T value)
+        {
+            Properties.Add(key, value);
+        }
+
         public bool CanReach(InstructionNode node)
         {
             // Determining if this node can reach the target node is a simple traversal
@@ -291,12 +300,27 @@ namespace IlOptimizer.CodeAnalysis
             return TraverseDepthFirst((traversedNode) => (traversedNode == node)).Any();
         }
 
+        public bool ContainsProperty(object key)
+        {
+            return Properties.ContainsKey(key);
+        }
+
         public bool IsAdjacent(InstructionNode node)
         {
             // Determining if we are adjacent to a node is simply checking if the
             // children or parents of this node contains the target node.
 
             return Children.Contains(node) || Parents.Contains(node);
+        }
+
+        public T GetProperty<T>(object key)
+        {
+            return (T)(Properties[key]);
+        }
+
+        public void SetProperty<T>(object key, T value)
+        {
+            Properties[key] = value;
         }
 
         public void TraverseBreadthFirst(Action<InstructionNode> action)
@@ -413,6 +437,20 @@ namespace IlOptimizer.CodeAnalysis
                 }
             }
             while (pendingNodes.Count != 0);
+        }
+
+        public bool TryGetProperty<T>(object key, out T value)
+        {
+            if (ContainsProperty(key))
+            {
+                value = GetProperty<T>(key);
+                return true;
+            }
+            else
+            {
+                value = default;
+                return false;
+            }
         }
         #endregion
 
