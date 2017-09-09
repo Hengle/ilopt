@@ -1,7 +1,10 @@
 // Copyright © Tanner Gooding and Contributors. Licensed under the MIT License (MIT). See License.md in the repository root for more information.
 
+using System.Collections.Generic;
+using System.Linq;
 using IlOptimizer.CodeAnalysis;
 using Mono.Cecil;
+using Mono.Cecil.Cil;
 
 namespace IlOptimizer
 {
@@ -14,23 +17,90 @@ namespace IlOptimizer
             {
                 var methodBody = method.Body;
 
-                if (methodBody.InitLocals == false)
+                if (methodBody.InitLocals)
                 {
-                    return false;
-                }
 
-                methodBody.InitLocals = false;
-                {
                     var instructionGraph = new InstructionGraph(methodBody);
+                    var root = instructionGraph.Root;
 
-                    foreach (var variable in methodBody.Variables)
+                    var variableDataMap = new Dictionary<InstructionNode, bool?[]>();
+                    var variables = methodBody.Variables;
+
+                    var foundLocalloc = false;
+
+                    // We first do a depth first traversal and determine, for each variable
+                    // whether or not it was accessed (not-null) for a node and whether the
+                    // access was a load (false) or a store (true).
+
+                    root.TraverseDepthFirst((node) => {
+                        var instructions = node.Instructions;
+
+                        var variableData = new bool?[variables.Count];
+                        variableDataMap[node] = variableData;
+
+                        for (var index = 0; index < instructions.Length; index++)
+                        {
+                            var instruction = instructions[index];
+
+                            if (instruction.OpCode.Code == Code.Localloc)
+                            {
+                                foundLocalloc = true;
+                                return;
+                            }
+                            else if (instruction.IsStoreLocalInstruction())
+                            {
+                                var variableIndex = instruction.GetStoreLocalIndex();
+
+                                if (variableData[variableIndex].HasValue)
+                                {
+                                    continue;
+                                }
+
+                                variableData[variableIndex] = true;
+                            }
+                            else if (instruction.IsLoadLocalInstruction())
+                            {
+                                var variableIndex = instruction.GetLoadLocalIndex();
+
+                                if (variableData[variableIndex].HasValue)
+                                {
+                                    continue;
+                                }
+
+                                index++;
+
+                                variableData[variableIndex] = (index < instructions.Length)
+                                                           && (instructions[index].OpCode.Code == Code.Initobj);
+                            }
+                        }
+                    });
+
+                    if (foundLocalloc)
                     {
-                        // TODO: We need to go through the instruction graph for each variable
-                        // and determine whether or not the code naturally initializes it before
-                        // its first access.
+                        // TODO: Actually handle localloc
+                        return false;
                     }
+
+                    var unassignedVariables = new Stack<int>();
+                    var rootVariableData = variableDataMap[root];
+
+                    for (var index = 0; index < rootVariableData.Length; index++)
+                    {
+                        if (rootVariableData[index].GetValueOrDefault() == false)
+                        {
+                            unassignedVariables.Push(index);
+                        }
+                    }
+
+                    if (unassignedVariables.Count == 0)
+                    {
+                        // The simplest route, all variables were assigned in the root node.
+                        methodBody.InitLocals = false;
+                        return true;
+                    }
+
+                    // TODO: Handle the case where variables were assigned outside the root node.
                 }
-                return true;
             }
 
             return false;

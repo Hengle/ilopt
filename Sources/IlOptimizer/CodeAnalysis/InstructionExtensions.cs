@@ -25,6 +25,7 @@ namespace IlOptimizer.CodeAnalysis
                 case Code.Ldloc_3:
                     return 3;
 
+                case Code.Ldloc_S:
                 case Code.Ldloca_S:
                 case Code.Ldloc:
                 case Code.Ldloca:

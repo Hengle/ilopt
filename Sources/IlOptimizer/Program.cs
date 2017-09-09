@@ -169,7 +169,7 @@ namespace IlOptimizer
         {
             var thisAssembly = Assembly.GetExecutingAssembly();
 
-            Console.WriteLine("IlOptimizer v{thisAssembly.GetName().Version} - A tool for performing post-compilation optimization on managed assemblies.");
+            Console.WriteLine($"IlOptimizer v{thisAssembly.GetName().Version} - A tool for performing post-compilation optimization on managed assemblies.");
             Console.WriteLine($"    {Path.GetFileName(thisAssembly.Location)} [help-command] [filter-command] <optimizations> <assemblies>");
             Console.WriteLine();
             Console.WriteLine("    All optimizations and commands must be prefixed with '-' or '/'.");
