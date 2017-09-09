@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Mono.Cecil;
@@ -16,6 +17,9 @@ namespace IlOptimizer
             new Optimization(
                 name: nameof(StripLocalsInit),
                 description: "Strips the 'init' flag from the '.locals' directive for the matching methods.",
+                availableParameters: new Dictionary<string, string> {
+                    ["all"] = "Skips definite assignment analysis and strips the flag regardless"
+                },
                 optimizeMethod: StripLocalsInit.Optimize
             )
         };
@@ -63,6 +67,34 @@ namespace IlOptimizer
 
                         if (parameter != null)
                         {
+                            if (parameter != string.Empty)
+                            {
+                                if (optimization.AvailableParameters.Count == 0)
+                                {
+                                    WriteWarning("    Warning: A parameter was specified but none are expected.");
+                                    WriteWarning($"             Optimization: '{arg}'");
+                                    WriteWarning($"             Parameter: '{parameter}'");
+                                    WriteWarning("    Continuing will ignore this parameter; Otherwise, the process will exit.");
+
+                                    if (!CheckForContinue())
+                                    {
+                                        Exit();
+                                    }
+                                }
+                                else if (optimization.AvailableParameters.Keys.Any((key) => key.Equals(parameter, StringComparison.OrdinalIgnoreCase)))
+                                {
+                                    optimization.Parameter = parameter;
+                                }
+                                else
+                                {
+                                    WriteError("    Error: An unrecognized parameter was specified.");
+                                    WriteError($"           Optimization: '{arg}'");
+                                    WriteError($"           Parameter: '{parameter}'");
+                                    WriteError("    Please use the 'help' command for more details on the accepted parameters.");
+                                    Exit();
+                                }
+                            }
+
                             optimizations.Add(optimization);
                             break;
                         }
@@ -189,6 +221,16 @@ namespace IlOptimizer
             {
                 Console.WriteLine($"        {optimization.Name}");
                 Console.WriteLine($"            {optimization.Description}");
+
+                if (optimization.AvailableParameters.Count != 0)
+                {
+                    Console.WriteLine($"            Parameters: {string.Join(", ", optimization.AvailableParameters)}");
+
+                    foreach (var availableParameter in optimization.AvailableParameters)
+                    {
+                        Console.WriteLine($"                {availableParameter.Key}: {availableParameter.Value}");
+                    }
+                }
             }
 
             Console.WriteLine();
@@ -242,7 +284,7 @@ namespace IlOptimizer
             {
                 var optimization = optimizations[index];
 
-                if (optimization.OptimizeMethod(method))
+                if (optimization.OptimizeMethod(method, optimization.Parameter))
                 {
                     optimization.UpdatedMethodCount++;
                 }

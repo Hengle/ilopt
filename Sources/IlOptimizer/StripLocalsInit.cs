@@ -1,5 +1,6 @@
 // Copyright © Tanner Gooding and Contributors. Licensed under the MIT License (MIT). See License.md in the repository root for more information.
 
+using System;
 using System.Collections.Generic;
 using IlOptimizer.CodeAnalysis;
 using Mono.Cecil;
@@ -17,7 +18,7 @@ namespace IlOptimizer
     /// <summary>Provides methods for stripping the 'init' flag from the '.locals' directive for a method.</summary>
     public static class StripLocalsInit
     {
-        public static bool Optimize(MethodDefinition method)
+        public static bool Optimize(MethodDefinition method, string parameter)
         {
             if (method.HasBody)
             {
@@ -25,6 +26,13 @@ namespace IlOptimizer
 
                 if (methodBody.InitLocals)
                 {
+                    if (parameter.Equals("all", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // The user wants us to strip the flag from all methods
+                        methodBody.InitLocals = false;
+                        return true;
+                    }
+
                     var instructionGraph = new InstructionGraph(methodBody);
                     var root = instructionGraph.Root;
 
