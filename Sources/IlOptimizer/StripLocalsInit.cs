@@ -1,13 +1,19 @@
 // Copyright © Tanner Gooding and Contributors. Licensed under the MIT License (MIT). See License.md in the repository root for more information.
 
 using System.Collections.Generic;
-using System.Linq;
 using IlOptimizer.CodeAnalysis;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
 namespace IlOptimizer
 {
+    // This has been tested on the v4.7 build of mscorlib.
+    // We end up processing 1 Module, 3266 Types, 33 Events, 4939 Properties, and 34653 Methods
+    // Of those methods, 30067 have a method body, but only 9003 have the `InitLocals` flag.
+    // Ignoring methods containing `localloc`, we have 8928 methods remaining which can be processed
+    // We then also currently ignore methods where all variables are not assigned before the first branch
+    // This leaves us with 4091 methods that we can actually optimize right now (roughly 45%).
+
     /// <summary>Provides methods for stripping the 'init' flag from the '.locals' directive for a method.</summary>
     public static class StripLocalsInit
     {
@@ -19,7 +25,6 @@ namespace IlOptimizer
 
                 if (methodBody.InitLocals)
                 {
-
                     var instructionGraph = new InstructionGraph(methodBody);
                     var root = instructionGraph.Root;
 
