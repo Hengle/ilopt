@@ -419,6 +419,8 @@ namespace IlOptimizer
                     }
                 }
 
+                // TODO: Add assembly resolver for netcore.
+
                 var assembly = AssemblyDefinition.ReadAssembly(assemblyPath);
                 Process(assembly, regex, optimizations);
 
