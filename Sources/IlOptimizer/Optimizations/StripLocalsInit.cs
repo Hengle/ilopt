@@ -13,9 +13,11 @@ namespace IlOptimizer.Optimizations
     // We end up processing 1 Module, 3266 Types, 33 Events, 4939 Properties, and 34653 Methods
     // Of those methods, 30067 have a method body, but only 9003 have the `InitLocals` flag.
     //
-    // none:        Updated 8566 Methods, Skipped 25628 Methods, Failed 459 Methods     ( 95.1%)
+    // none:        Updated 8576 Methods, Skipped 25628 Methods, Failed 449 Methods     ( 95.3%)
     // all:         Updated 9003 Methods, Skipped 25650 Methods, Failed 0 Methods       (100.0%)
-    // out:         Updated 8784 Methods, Skipped 25645 Methods, Failed 224 Methods     ( 97.6%)
+    // out:         Updated 8838 Methods, Skipped 25647 Methods, Failed 168 Methods     ( 98.2%)
+    // stackalloc:  Updated 8651 Methods, Skipped 25628 Methods, Failed 374 Methods     ( 96.1%)
+    // csharp:      Updated 8913 Methods, Skipped 25647 Methods, Failed 93 Methods      ( 99.0%)
 
     /// <summary>Provides methods for stripping the 'init' flag from the '.locals' directive for a method.</summary>
     public static class StripLocalsInit
@@ -35,7 +37,14 @@ namespace IlOptimizer.Optimizations
                         return true;
                     }
 
-                    var skipOutParameters = parameter.Equals("out", StringComparison.OrdinalIgnoreCase);
+                    var skipOutVariables = parameter.Equals("out", StringComparison.OrdinalIgnoreCase);
+                    var skipStackallocVariables = parameter.Equals("stackalloc", StringComparison.OrdinalIgnoreCase);
+
+                    if (parameter.Equals("csharp", StringComparison.OrdinalIgnoreCase))
+                    {
+                        skipOutVariables = true;
+                        skipStackallocVariables = true;
+                    }
 
                     var instructionGraph = new InstructionGraph(methodBody);
                     var root = instructionGraph.Root;
@@ -121,7 +130,7 @@ namespace IlOptimizer.Optimizations
                                                 instruction = consumingInstruction;
                                                 assigned = true;
                                             }
-                                            else if (skipOutParameters)
+                                            else if (skipOutVariables)
                                             {
                                                 if (consumingMethod.HasThis && (consumingMethod.ExplicitThis == false))
                                                 {
@@ -140,8 +149,9 @@ namespace IlOptimizer.Optimizations
                                                 }
                                             }
                                         }
-
                                     }
+
+                                    index--;
                                 }
                             }
 
@@ -159,13 +169,20 @@ namespace IlOptimizer.Optimizations
                         }
                     });
 
-                    if (containsLocalloc)
+                    if (containsLocalloc && (skipStackallocVariables == false))
                     {
                         return false;
                     }
 
                     var unassignedVariables = new Stack<(VariableDefinition variable, HashSet<InstructionNode> nodes)>();
-                    
+
+                    // Next we do a traversal for each variable to determine which nodes accessed it
+                    // and, in the case where only one node accesses it, or when the root node accesses
+                    // it first, we can determine 'definite assignment' by checking if that node assigns
+                    // the variable as its first access.
+                    //
+                    // TODO: This could probably be combined with the first traversal above
+
                     for (var index = 0; index < variables.Count; index++)
                     {
                         var variable = variables[index];
@@ -207,7 +224,10 @@ namespace IlOptimizer.Optimizations
                         return true;
                     }
 
-                    // TODO: Handle the case where variables were assigned outside the root node.
+                    // TODO: For the remaining cases, we need to do analysis between all nodes that access
+                    // a variable and determine if it was definitely assigned before any other access or if
+                    // we need to insert some initialization code and the best place to insert it.
+
                     return false;
                 }
             }

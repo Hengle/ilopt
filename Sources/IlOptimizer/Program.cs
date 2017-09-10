@@ -20,7 +20,9 @@ namespace IlOptimizer
                 description: "Strips the 'init' flag from the '.locals' directive for the matching methods.",
                 availableParameters: new Dictionary<string, string> {
                     ["all"] = "Skips definite assignment analysis and strips the flag regardless",
-                    ["out"] = "Skips definite assignment analysis for C# style 'out' parameters"
+                    ["out"] = "Skips definite assignment analysis for C# style 'out' variables",
+                    ["stackalloc"] = "Skips definite assignment analysis for C# style 'stackalloc' variables",
+                    ["csharp"] = "Combines the 'out' and 'stackalloc' options"
                 },
                 optimizeMethod: StripLocalsInit.Optimize
             )
