@@ -19,7 +19,8 @@ namespace IlOptimizer
                 name: nameof(StripLocalsInit),
                 description: "Strips the 'init' flag from the '.locals' directive for the matching methods.",
                 availableParameters: new Dictionary<string, string> {
-                    ["all"] = "Skips definite assignment analysis and strips the flag regardless"
+                    ["all"] = "Skips definite assignment analysis and strips the flag regardless",
+                    ["out"] = "Skips definite assignment analysis for C# style 'out' parameters"
                 },
                 optimizeMethod: StripLocalsInit.Optimize
             )

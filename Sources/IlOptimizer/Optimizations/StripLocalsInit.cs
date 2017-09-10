@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using IlOptimizer.CodeAnalysis;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
@@ -11,9 +12,10 @@ namespace IlOptimizer.Optimizations
     // This has been tested on the v4.7 build of mscorlib.
     // We end up processing 1 Module, 3266 Types, 33 Events, 4939 Properties, and 34653 Methods
     // Of those methods, 30067 have a method body, but only 9003 have the `InitLocals` flag.
-    // Ignoring methods containing `localloc`, we have 8928 methods remaining which can be processed
-    // We then also currently ignore methods where all variables are not assigned before the first branch
-    // This leaves us with 4091 methods that we can actually optimize right now (roughly 45%).
+    //
+    // none:        Updated 8566 Methods, Skipped 25628 Methods, Failed 459 Methods     ( 95.1%)
+    // all:         Updated 9003 Methods, Skipped 25650 Methods, Failed 0 Methods       (100.0%)
+    // out:         Updated 8784 Methods, Skipped 25645 Methods, Failed 224 Methods     ( 97.6%)
 
     /// <summary>Provides methods for stripping the 'init' flag from the '.locals' directive for a method.</summary>
     public static class StripLocalsInit
@@ -32,6 +34,8 @@ namespace IlOptimizer.Optimizations
                         methodBody.InitLocals = false;
                         return true;
                     }
+
+                    var skipOutParameters = parameter.Equals("out", StringComparison.OrdinalIgnoreCase);
 
                     var instructionGraph = new InstructionGraph(methodBody);
                     var root = instructionGraph.Root;
@@ -94,16 +98,49 @@ namespace IlOptimizer.Optimizations
                                 if (index < instructions.Length)
                                 {
                                     var nextInstruction = instructions[index];
-                                    var nextInstructionFamily = nextInstruction.GetInstructionFamily();
+                                    var consumingInstruction = nextInstruction.GetConsumerForLdloca(methodBody, out var stackIndex);
 
-                                    if (nextInstructionFamily == InstructionFamily.Initobj)
+                                    if (consumingInstruction != null)
                                     {
-                                        instruction = nextInstruction;
-                                        assigned = true;
-                                    }
-                                    else
-                                    {
-                                        index--;
+                                        var consumingInstructionFamily = consumingInstruction.GetInstructionFamily();
+
+                                        if ((consumingInstructionFamily == InstructionFamily.Initobj) && (stackIndex == 0))
+                                        {
+                                            instruction = nextInstruction;
+                                            assigned = true;
+                                        }
+                                        else if ((consumingInstructionFamily == InstructionFamily.Call) ||
+                                                 (consumingInstructionFamily == InstructionFamily.Callvirt) ||
+                                                 (consumingInstructionFamily == InstructionFamily.Newobj))
+                                        {
+                                            var consumingMethod = (MethodReference)(consumingInstruction.Operand);
+
+                                            if ((stackIndex == 0) &&
+                                                (consumingMethod is MethodDefinition methodDef) && methodDef.IsConstructor)
+                                            {
+                                                instruction = consumingInstruction;
+                                                assigned = true;
+                                            }
+                                            else if (skipOutParameters)
+                                            {
+                                                if (consumingMethod.HasThis && (consumingMethod.ExplicitThis == false))
+                                                {
+                                                    stackIndex--;
+                                                }
+
+                                                if (stackIndex != -1)
+                                                {
+                                                    var consumingParameter = consumingMethod.Parameters[stackIndex];
+
+                                                    if (consumingParameter.IsOut)
+                                                    {
+                                                        instruction = consumingInstruction;
+                                                        assigned = true;
+                                                    }
+                                                }
+                                            }
+                                        }
+
                                     }
                                 }
                             }
@@ -127,22 +164,45 @@ namespace IlOptimizer.Optimizations
                         return false;
                     }
 
-                    var unassignedVariables = new Stack<int>();
+                    var unassignedVariables = new Stack<(VariableDefinition variable, HashSet<InstructionNode> nodes)>();
                     
                     for (var index = 0; index < variables.Count; index++)
                     {
                         var variable = variables[index];
+                        var nodes = new HashSet<InstructionNode>();
 
-                        if ((root.TryGetProperty(variable, out variableAccessData) == false) || (variableAccessData.AssignedFirst == false))
+                        root.TraverseDepthFirst((node) => {
+                            if (node.ContainsProperty(variable))
+                            {
+                                nodes.Add(node);
+                            }
+                        });
+
+                        if (nodes.Contains(root))
                         {
-                            unassignedVariables.Push(index);
+                            variableAccessData = root.GetProperty<VariableAccessData>(variable);
+                        }
+                        else if (nodes.Count == 1)
+                        {
+                            var node = nodes.Single();
+                            variableAccessData = node.GetProperty<VariableAccessData>(variable);
+                        }
+                        else
+                        {
                             continue;
+                        }
+
+                        if (variableAccessData.AssignedFirst == false)
+                        {
+                            unassignedVariables.Push((variable, nodes));
                         }
                     }
                     
                     if (unassignedVariables.Count == 0)
                     {
-                        // The simplest route, all variables were assigned in the root node.
+                        // The simplest route, all variables were assigned in the root node or
+                        // they were only accessed from a single node and was assigned there.
+
                         methodBody.InitLocals = false;
                         return true;
                     }
