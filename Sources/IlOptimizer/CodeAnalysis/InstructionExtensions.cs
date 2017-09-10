@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 
@@ -928,6 +929,20 @@ namespace IlOptimizer.CodeAnalysis
                         return 4;
 
                     case MetadataType.ValueType:
+                    {
+                        if (type.IsDefinition)
+                        {
+                            var typeDefinition = (TypeDefinition)(type);
+
+                            if (typeDefinition.IsEnum)
+                            {
+                                return GetStackSize(typeDefinition.Fields.First().FieldType);
+                            }
+                        }
+
+                        return 4;
+                    }
+
                     case MetadataType.Var:
                     case MetadataType.GenericInstance:
                     case MetadataType.MVar:

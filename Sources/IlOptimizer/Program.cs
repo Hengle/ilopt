@@ -33,113 +33,122 @@ namespace IlOptimizer
         /// <returns>The exit code of the program.</returns>
         public static int Main(string[] args)
         {
-            if (args.Length == 0)
+            try
             {
-                return PrintHelp();
-            }
-
-            var regex = string.Empty;
-            var optimizations = new List<Optimization>();
-            var assemblyPaths = new List<string>();
-
-            foreach (var arg in args)
-            {
-                if (Matches(arg, "?", "h", "help") == string.Empty)
+                if (args.Length == 0)
                 {
                     return PrintHelp();
                 }
-                else
+
+                var regex = string.Empty;
+                var optimizations = new List<Optimization>();
+                var assemblyPaths = new List<string>();
+
+                foreach (var arg in args)
                 {
-                    var parameter = Matches(arg, "f", "filter");
-
-                    if (parameter != null)
+                    if (Matches(arg, "?", "h", "help") == string.Empty)
                     {
-                        if (parameter == string.Empty)
-                        {
-                            WriteError("    Error: The 'filter' command was specified but did not contain the expected parameter.");
-                            WriteError("           Please use the 'help' command for more details on the expected format.");
-                            Exit();
-                        }
-
-                        regex = parameter;
-                        continue;
+                        return PrintHelp();
                     }
-
-                    foreach (var optimization in Optimizations)
+                    else
                     {
-                        parameter = Matches(arg, optimization.Name);
+                        var parameter = Matches(arg, "f", "filter");
 
                         if (parameter != null)
                         {
-                            if (parameter != string.Empty)
+                            if (parameter == string.Empty)
                             {
-                                if (optimization.AvailableParameters.Count == 0)
-                                {
-                                    WriteWarning("    Warning: A parameter was specified but none are expected.");
-                                    WriteWarning($"             Optimization: '{arg}'");
-                                    WriteWarning($"             Parameter: '{parameter}'");
-                                    WriteWarning("    Continuing will ignore this parameter; Otherwise, the process will exit.");
+                                WriteError("    Error: The 'filter' command was specified but did not contain the expected parameter.");
+                                WriteError("           Please use the 'help' command for more details on the expected format.");
+                                Exit();
+                            }
 
-                                    if (!CheckForContinue())
+                            regex = parameter;
+                            continue;
+                        }
+
+                        foreach (var optimization in Optimizations)
+                        {
+                            parameter = Matches(arg, optimization.Name);
+
+                            if (parameter != null)
+                            {
+                                if (parameter != string.Empty)
+                                {
+                                    if (optimization.AvailableParameters.Count == 0)
                                     {
+                                        WriteWarning("    Warning: A parameter was specified but none are expected.");
+                                        WriteWarning($"             Optimization: '{arg}'");
+                                        WriteWarning($"             Parameter: '{parameter}'");
+                                        WriteWarning("    Continuing will ignore this parameter; Otherwise, the process will exit.");
+
+                                        if (!CheckForContinue())
+                                        {
+                                            Exit();
+                                        }
+                                    }
+                                    else if (optimization.AvailableParameters.Keys.Any((key) => key.Equals(parameter, StringComparison.OrdinalIgnoreCase)))
+                                    {
+                                        optimization.Parameter = parameter;
+                                    }
+                                    else
+                                    {
+                                        WriteError("    Error: An unrecognized parameter was specified.");
+                                        WriteError($"           Optimization: '{arg}'");
+                                        WriteError($"           Parameter: '{parameter}'");
+                                        WriteError("    Please use the 'help' command for more details on the accepted parameters.");
                                         Exit();
                                     }
                                 }
-                                else if (optimization.AvailableParameters.Keys.Any((key) => key.Equals(parameter, StringComparison.OrdinalIgnoreCase)))
+
+                                optimizations.Add(optimization);
+                                break;
+                            }
+                        }
+
+                        if (parameter is null)
+                        {
+                            var path = Path.GetFullPath(arg);
+
+                            if (!File.Exists(arg))
+                            {
+                                WriteWarning("    Warning: A specified assembly could not be located.");
+                                WriteWarning($"             Argument: '{arg}'");
+                                WriteWarning($"             Resolved Path: '{path}'");
+                                WriteWarning("    Continuing will ignore this argument; Otherwise, the process will exit.");
+
+                                if (!CheckForContinue())
                                 {
-                                    optimization.Parameter = parameter;
-                                }
-                                else
-                                {
-                                    WriteError("    Error: An unrecognized parameter was specified.");
-                                    WriteError($"           Optimization: '{arg}'");
-                                    WriteError($"           Parameter: '{parameter}'");
-                                    WriteError("    Please use the 'help' command for more details on the accepted parameters.");
                                     Exit();
                                 }
                             }
-
-                            optimizations.Add(optimization);
-                            break;
-                        }
-                    }
-
-                    if (parameter is null)
-                    {
-                        var path = Path.GetFullPath(arg);
-
-                        if (!File.Exists(arg))
-                        {
-                            WriteWarning("    Warning: A specified assembly could not be located.");
-                            WriteWarning($"             Argument: '{arg}'");
-                            WriteWarning($"             Resolved Path: '{path}'");
-                            WriteWarning("    Continuing will ignore this argument; Otherwise, the process will exit.");
-
-                            if (!CheckForContinue())
+                            else
                             {
-                                Exit();
+                                assemblyPaths.Add(path);
                             }
-                        }
-                        else
-                        {
-                            assemblyPaths.Add(path);
                         }
                     }
                 }
-            }
 
-            if (optimizations.Count == 0)
+                if (optimizations.Count == 0)
+                {
+                    WriteError("    Error: No optimizations were specified.");
+                    Exit();
+                }
+                else if (assemblyPaths.Count == 0)
+                {
+                    WriteError("    Error: No assemblies were specified.");
+                    Exit();
+                }
+
+                Run(regex, optimizations, assemblyPaths);
+            }
+            catch (Exception e)
             {
-                WriteError("    Error: No optimizations were specified.");
+                WriteError(e.Message);
                 Exit();
             }
-            else if (assemblyPaths.Count == 0)
-            {
-                WriteError("    Error: No assemblies were specified.");
-                Exit();
-            }
 
-            Run(regex, optimizations, assemblyPaths);
             return 0;
         }
 
@@ -229,7 +238,7 @@ namespace IlOptimizer
             Console.WriteLine("        Filters the methods that should be optimized by matching the regular expression against a method's full name.");
             Console.WriteLine("        All methods will be matched if this command is not specified.");
             Console.WriteLine();
-            Console.WriteLine($"    Options");
+            Console.WriteLine($"    Optimizations");
 
             foreach (var optimization in Optimizations)
             {
@@ -297,18 +306,28 @@ namespace IlOptimizer
             for (var index = 0; index < optimizations.Count; index++)
             {
                 var optimization = optimizations[index];
-                var result = optimization.OptimizeMethod(method, optimization.Parameter);
 
-                if (result is null)
+                try
                 {
-                    optimization.SkippedMethodCount++;
+                    var result = optimization.OptimizeMethod(method, optimization.Parameter);
+
+                    if (result is null)
+                    {
+                        optimization.SkippedMethodCount++;
+                    }
+                    else if (result == true)
+                    {
+                        optimization.UpdatedMethodCount++;
+                    }
+                    else
+                    {
+                        optimization.FailedMethodCount++;
+                    }
                 }
-                else if (result == true)
+                catch (Exception e)
                 {
-                    optimization.UpdatedMethodCount++;
-                }
-                else
-                {
+                    WriteWarning($"Failed to optimize: {method.FullName}");
+                    WriteWarning($"    Exception: {e.Message}");
                     optimization.FailedMethodCount++;
                 }
             }
@@ -401,10 +420,21 @@ namespace IlOptimizer
                 }
 
                 var assembly = AssemblyDefinition.ReadAssembly(assemblyPath);
+                Process(assembly, regex, optimizations);
+
+                try
                 {
-                    Process(assembly, regex, optimizations);
+                    assembly.Write(outputAssemblyPath);
                 }
-                assembly.Write(outputAssemblyPath);
+                catch
+                {
+                    if (File.Exists(outputAssemblyPath))
+                    {
+                        File.Delete(outputAssemblyPath);
+                    }
+
+                    throw;
+                }
 
                 Console.WriteLine();
 
